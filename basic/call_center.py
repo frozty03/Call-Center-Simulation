@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from collections import deque
+import cmd
 
 # id, state and call
 operators = {
@@ -15,10 +16,10 @@ calls = {}
 queue = deque()
 
 
-def find_available_operator(exclude=None):
+def find_available_operator():
     # return first availavle operator or None
     for op_id, op in operators.items():
-        if op["state"] == "available" and op_id != exclude:
+        if op["state"] == "available":
             return op_id
     return None
 
@@ -32,7 +33,7 @@ def deliver_call(call_id, op_id):
     print(f"Call {call_id} ringing for operator {op_id}")
 
 
-def try_deliver_from_queue():
+def verify_queue():
     # deliver a call from queue if there is an operator available
     if queue:
         op_id = find_available_operator()
@@ -85,15 +86,14 @@ def reject_call(op_id):
 
     call_id = operators[op_id]["call"]
 
-    # Libera o operador
     operators[op_id]["state"] = "available"
     operators[op_id]["call"] = None
     calls[call_id]["state"] = "waiting"
     calls[call_id]["operator"] = None
     print(f"Call {call_id} rejected by operator {op_id}")
 
-    # Tenta entregar para outro (pulando quem rejeitou)
-    next_op = find_available_operator(exclude=op_id)
+    # try to deliver again
+    next_op = find_available_operator()
     if next_op:
         deliver_call(call_id, next_op)
     else:
@@ -115,7 +115,7 @@ def hangup_call(call_id):
         operators[op_id]["call"] = None
         del calls[call_id]
         print(f"Call {call_id} finished and operator {op_id} available")
-        try_deliver_from_queue()
+        verify_queue()
 
     elif call["state"] == "ringing":
         op_id = call["operator"]
@@ -123,9 +123,46 @@ def hangup_call(call_id):
         operators[op_id]["call"] = None
         del calls[call_id]
         print(f"Call {call_id} missed")
-        try_deliver_from_queue()
+        verify_queue()
 
     elif call["state"] == "waiting":
         queue.remove(call_id)
         del calls[call_id]
         print(f"Call {call_id} missed")
+
+
+class CallCenterCmd(cmd.Cmd):
+    # CLI interface
+
+    prompt = "call center > "
+    intro = (
+        "=== Call Center Simulator ===\n"
+        "Commands: call <id>, answer <id>, reject <id>, hangup <id>\n"
+        "Type 'quit' to exit.\n"
+    )
+
+    def do_call(self, arg):
+        if arg.strip():
+            receive_call(arg.strip())
+
+    def do_answer(self, arg):
+        if arg.strip():
+            answer_call(arg.strip())
+
+    def do_reject(self, arg):
+        if arg.strip():
+            reject_call(arg.strip())
+
+    def do_hangup(self, arg):
+        if arg.strip():
+            hangup_call(arg.strip())
+
+    def do_quit(self, arg):
+        return True
+
+    def emptyline(self):
+        pass
+
+# to keep the common architecture of python programs
+if __name__ == "__main__":
+    CallCenterCmd().cmdloop()
