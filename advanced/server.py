@@ -50,9 +50,8 @@ def receive_call(call_id):
     # receive new call and try to deliver to an operator
     msgs = []
     if call_id in calls:
-        print(f"Error: Call {call_id} already exists")
         # returning because im not printing anymore, but sending it to the client
-        return
+        return [f"Error: Call {call_id} already exists"]
 
     calls[call_id] = {"state": "waiting", "operator": None}
     msgs.append(f"Call {call_id} received")
@@ -69,26 +68,26 @@ def receive_call(call_id):
 def answer_call(op_id):
     
     if op_id not in operators:
-        return (f"Error: Operator {op_id} not found")
+        return [f"Error: Operator {op_id} not found"]
         
     if operators[op_id]["state"] != "ringing":
-        return (f"Error: Operator {op_id} is not ringing")
+        return [f"Error: Operator {op_id} is not ringing"]
         
 
     call_id = operators[op_id]["call"]
     operators[op_id]["state"] = "busy"
     calls[call_id]["state"] = "answered"
-    return (f"Call {call_id} answered by operator {op_id}")
+    return [f"Call {call_id} answered by operator {op_id}"]
 
 
 def reject_call(op_id):
     # operator reject the call. it goes to the next available operetor
     msgs = []
     if op_id not in operators:
-        return (f"Error: Operator {op_id} not found")
+        return [f"Error: Operator {op_id} not found"]
         
     if operators[op_id]["state"] != "ringing":
-        return (f"Error: Operator {op_id} is not ringing")
+        return [f"Error: Operator {op_id} is not ringing"]
         
 
     call_id = operators[op_id]["call"]
@@ -102,7 +101,7 @@ def reject_call(op_id):
     # try to deliver again
     next_op = find_available_operator()
     if next_op:
-        deliver_call(call_id, next_op)
+        deliver_call(call_id, next_op, msgs)
     else:
         queue.appendleft(call_id)
         msgs.append(f"Call {call_id} waiting in queue")
@@ -113,7 +112,7 @@ def hangup_call(call_id):
     # end a call. if answered: finished. if not answered: missed
     msgs = []
     if call_id not in calls:
-        return (f"Error: Call {call_id} not found")
+        return [f"Error: Call {call_id} not found"]
         
 
     call = calls[call_id]
