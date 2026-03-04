@@ -16,6 +16,9 @@ calls = {}
 # wait list
 queue = deque()
 
+# timeout handles (call_id -> IDelayedCall)
+timeout_handles = {}
+
 
 def find_available_operator():
     # return first availavle operator or None
@@ -26,7 +29,7 @@ def find_available_operator():
 
 
 # sending msgs instead of printing
-def deliver_call(call_id, op_id, msgs):
+def deliver_call(call_id, op_id, msgs, transport=None):
     # deliver a call to an operator, both in ringing state
     # sending msg to client.py
     calls[call_id]["state"] = "ringing"
@@ -35,30 +38,71 @@ def deliver_call(call_id, op_id, msgs):
     operators[op_id]["call"] = call_id
     msgs.append(f"Call {call_id} ringing for operator {op_id}")
 
+    # save transport so timeout can send messages back
+    if transport:
+        calls[call_id]["transport"] = transport
 
-def verify_queue(msgs):
+    # schedule timeout: 10s to answer or reject
+    handle = reactor.callLater(10, handle_timeout, call_id, op_id)
+    timeout_handles[call_id] = handle
+
+
+def cancel_timeout(call_id):
+    # cancel a pending timeout if it exists
+    handle = timeout_handles.pop(call_id, None)
+    if handle and handle.active():
+        handle.cancel()
+
+
+def handle_timeout(call_id, op_id):
+    # called by reactor after 10s if operator didn't answer or reject
+    timeout_handles.pop(call_id, None)
+
+    # check if still ringing for this operator
+    if call_id not in calls:
+        return
+    if calls[call_id]["state"] != "ringing" or calls[call_id]["operator"] != op_id:
+        return
+
+    # free the operator
+    operators[op_id]["state"] = "available"
+    operators[op_id]["call"] = None
+
+    # call is lost
+    transport = calls[call_id].get("transport")
+    del calls[call_id]
+
+    msg = f"Call {call_id} ignored by operator {op_id}"
+
+    # send message back to client
+    if transport:
+        response = json.dumps({"response": msg}) + "\n"
+        transport.write(response.encode("utf-8"))
+
+
+def verify_queue(msgs, transport=None):
     # deliver a call from queue if there is an operator available
     if queue:
         op_id = find_available_operator()
         if op_id:
             call_id = queue.popleft()
             if call_id in calls:
-                deliver_call(call_id, op_id, msgs)
+                deliver_call(call_id, op_id, msgs, calls[call_id].get("transport") or transport)
 
 
-def receive_call(call_id):
+def receive_call(call_id, transport=None):
     # receive new call and try to deliver to an operator
     msgs = []
     if call_id in calls:
         # returning because im not printing anymore, but sending it to the client
         return [f"Error: Call {call_id} already exists"]
 
-    calls[call_id] = {"state": "waiting", "operator": None}
+    calls[call_id] = {"state": "waiting", "operator": None, "transport": transport}
     msgs.append(f"Call {call_id} received")
 
     op_id = find_available_operator()
     if op_id:
-        deliver_call(call_id, op_id, msgs)
+        deliver_call(call_id, op_id, msgs, transport)
     else:
         queue.append(call_id)
         msgs.append(f"Call {call_id} waiting in queue")
@@ -75,6 +119,7 @@ def answer_call(op_id):
         
 
     call_id = operators[op_id]["call"]
+    cancel_timeout(call_id)
     operators[op_id]["state"] = "busy"
     calls[call_id]["state"] = "answered"
     return [f"Call {call_id} answered by operator {op_id}"]
@@ -91,7 +136,9 @@ def reject_call(op_id):
         
 
     call_id = operators[op_id]["call"]
+    cancel_timeout(call_id)
 
+    transport = calls[call_id].get("transport")
     operators[op_id]["state"] = "available"
     operators[op_id]["call"] = None
     calls[call_id]["state"] = "waiting"
@@ -101,7 +148,7 @@ def reject_call(op_id):
     # try to deliver again
     next_op = find_available_operator()
     if next_op:
-        deliver_call(call_id, next_op, msgs)
+        deliver_call(call_id, next_op, msgs, transport)
     else:
         queue.appendleft(call_id)
         msgs.append(f"Call {call_id} waiting in queue")
@@ -116,14 +163,16 @@ def hangup_call(call_id):
         
 
     call = calls[call_id]
+    cancel_timeout(call_id)
 
     if call["state"] == "answered":
         op_id = call["operator"]
         operators[op_id]["state"] = "available"
         operators[op_id]["call"] = None
+        transport = call.get("transport")
         del calls[call_id]
         msgs.append(f"Call {call_id} finished and operator {op_id} available")
-        verify_queue(msgs)
+        verify_queue(msgs, transport)
 
     elif call["state"] == "ringing":
         op_id = call["operator"]
@@ -163,7 +212,7 @@ class CallCenterProtocol(protocol.Protocol):
             id_value = command_data["id"]
 
             if command == "call":
-                msgs = receive_call(id_value)
+                msgs = receive_call(id_value, self.transport)
             elif command == "answer":
                 msgs = answer_call(id_value)
             elif command == "reject":

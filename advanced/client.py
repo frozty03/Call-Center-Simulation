@@ -12,6 +12,9 @@ connection = None
 responses = []
 response_event = threading.Event()
 
+# flag to know if we are waiting for a sync response
+waiting_for_response = False
+
 class ClientProtocol(protocol.Protocol):
 
     def connectionMade(self):
@@ -32,10 +35,17 @@ class ClientProtocol(protocol.Protocol):
         while "\n" in self.buffer:
             line, self.buffer = self.buffer.split("\n", 1)
             msg = json.loads(line).get("response", "")
-            responses.append(msg)
 
-        # tells cmd thread the response arrived
-        response_event.set()
+            if waiting_for_response:
+                # sync response: save and signal
+                responses.append(msg)
+                response_event.set()
+            else:
+                # async message (timeout): print directly
+                print(f"\n{msg}")
+                import sys
+                sys.stdout.write("call center > ")
+                sys.stdout.flush()
 
     def connectionLost(self, reason):
         reactor.callFromThread(reactor.stop)
@@ -51,6 +61,7 @@ class ClientFactory(protocol.ClientFactory):
         reactor.stop()
 
 def send_and_wait(command, id_value):
+    global waiting_for_response
     if connection is None:
         print("Error: Not connected")
         return
@@ -58,9 +69,10 @@ def send_and_wait(command, id_value):
     # set json as requested
     command_json = json.dumps({"command": command, "id": id_value})
 
-    # clean previosu answers
+    # clean previous answers
     responses.clear()
     response_event.clear()
+    waiting_for_response = True
 
     # send to server (callFromThread = thread-safe)
     reactor.callFromThread(connection.transport.write,
@@ -68,6 +80,7 @@ def send_and_wait(command, id_value):
 
     # wait for it to arrive
     response_event.wait(timeout=5.0)
+    waiting_for_response = False
 
     for msg in responses:
         print(msg)
