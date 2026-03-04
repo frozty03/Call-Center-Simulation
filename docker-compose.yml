@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  server:
+    build:
+      context: ./advanced
+      dockerfile: dockerfile.server
+    container_name: callcenter-server
+    ports:
+      - "5678:5678"
+
+  client:
+    build:
+      context: ./advanced
+      dockerfile: dockerfile.client
+    container_name: callcenter-client
+    environment:
+      - SERVER_HOST=server
+    depends_on:
+      - server
+    stdin_open: true
+    tty: true

@@ -3,6 +3,7 @@
 import cmd
 import json
 import threading
+import os
 from twisted.internet import reactor, protocol
 
 # connection reference
@@ -119,6 +120,7 @@ class CallCenterCmd(cmd.Cmd):
 
 
 if __name__ == "__main__":
-    reactor.connectTCP("localhost", 5678, ClientFactory())
+    host = os.environ.get("SERVER_HOST", "localhost")
+    reactor.connectTCP(host, 5678, ClientFactory())
     reactor.callInThread(CallCenterCmd().cmdloop)
     reactor.run()
